@@ -1,13 +1,25 @@
 import { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 
+const SECTION_232 = [
+  { keyword: "steel", duty: "9903.80.01", rate: "25%" },
+  { keyword: "aluminum", duty: "9903.85.01", rate: "10%" }
+];
+
+const SECTION_301 = [
+  { prefix: "8504", duty: "9903.88.03", rate: "25%" },
+  { prefix: "8471", duty: "9903.88.01", rate: "25%" }
+];
+
 export default function App() {
   const [description, setDescription] = useState("");
   const [country, setCountry] = useState("");
   const [user, setUser] = useState("");
+  const [hts, setHts] = useState("");
   const [entries, setEntries] = useState([]);
   const [alertsEnabled, setAlertsEnabled] = useState(true);
 
+  // ✅ KPI calculations
   const totalEntries = entries.length;
   const errorEntries = entries.filter(e => e.flags !== "None").length;
   const errorRate =
@@ -15,7 +27,7 @@ export default function App() {
       ? ((errorEntries / totalEntries) * 100).toFixed(1)
       : 0;
 
-  // ✅ Alert system
+  // ✅ Alerts
   useEffect(() => {
     if (!alertsEnabled) return;
     if (errorRate > 20) {
@@ -23,30 +35,61 @@ export default function App() {
     }
   }, [entries]);
 
-  // ✅ Entry logic
-  const submitEntry = () => {
-    if (!description || !country) {
-      alert("Description and Country required");
+  // ✅ Classification Engine
+  const classifyEntry = () => {
+    if (!description || !country || !hts) {
+      alert("Description, Country, and HTS required");
       return;
     }
 
-    let flags = "None";
+    let duties = [];
+    let flags = [];
 
+    const desc = description.toLowerCase();
+
+    // Section 232
+    SECTION_232.forEach(rule => {
+      if (desc.includes(rule.keyword)) {
+        duties.push(`${rule.duty} (${rule.rate})`);
+      }
+    });
+
+    // Section 301
     if (country.toLowerCase() === "china") {
-      flags = "Review 301 duty";
+      let found301 = false;
+
+      SECTION_301.forEach(rule => {
+        if (hts.startsWith(rule.prefix)) {
+          duties.push(`${rule.duty} (${rule.rate})`);
+          found301 = true;
+        }
+      });
+
+      if (!found301) {
+        flags.push("Missing 301 duty");
+      }
+    }
+
+    if (!hts) {
+      flags.push("Missing HTS");
     }
 
     const entry = {
       user,
       description,
       country,
-      flags,
+      hts,
+      duties: duties.join(" | ") || "None",
+      flags: flags.join(" | ") || "None",
       timestamp: new Date().toLocaleString()
     };
 
     setEntries(prev => [entry, ...prev]);
+
+    // reset inputs
     setDescription("");
     setCountry("");
+    setHts("");
   };
 
   // ✅ Excel export
@@ -69,7 +112,7 @@ export default function App() {
         <div>Error Rate: {errorRate}%</div>
       </div>
 
-      {/* Form */}
+      {/* Input Form */}
       <input
         placeholder="User"
         value={user}
@@ -77,7 +120,7 @@ export default function App() {
       /><br /><br />
 
       <input
-        placeholder="Description"
+        placeholder="Product Description"
         value={description}
         onChange={e => setDescription(e.target.value)}
       /><br /><br />
@@ -88,7 +131,13 @@ export default function App() {
         onChange={e => setCountry(e.target.value)}
       /><br /><br />
 
-      <button onClick={submitEntry}>Submit Entry</button>
+      <input
+        placeholder="HTS Code"
+        value={hts}
+        onChange={e => setHts(e.target.value)}
+      /><br /><br />
+
+      <button onClick={classifyEntry}>Generate Entry</button>
       <button onClick={exportToExcel}>Export Excel</button>
       <button onClick={() => setAlertsEnabled(!alertsEnabled)}>
         {alertsEnabled ? "Disable Alerts" : "Enable Alerts"}
@@ -96,16 +145,25 @@ export default function App() {
 
       <hr />
 
-      {/* Entries */}
+      {/* Entry Table */}
       {entries.map((e, i) => (
-        <div key={i} style={{
-          background: e.flags !== "None" ? "#ffcccc" : "#ccffcc",
-          padding: 10,
-          margin: 5
-        }}>
-          <strong>{e.user}</strong> | {e.description} | {e.country}
+        <div
+          key={i}
+          style={{
+            background: e.flags !== "None" ? "#ffcccc" : "#ccffcc",
+            padding: 10,
+            margin: 5
+          }}
+        >
+          <strong>{e.user}</strong> | {e.hts}
+          <div>{e.description}</div>
+          <div>{e.country}</div>
+          <div><b>Duties:</b> {e.duties}</div>
           <div>{e.timestamp}</div>
-          {e.flags !== "None" && <div>⚠ {e.flags}</div>}
+
+          {e.flags !== "None" && (
+            <div style={{ color: "red" }}>⚠ {e.flags}</div>
+          )}
         </div>
       ))}
     </div>
