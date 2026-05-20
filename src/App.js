@@ -7,30 +7,38 @@ export default function App() {
   const [user, setUser] = useState("");
   const [hts, setHts] = useState("");
   const [entries, setEntries] = useState([]);
-  const [search, setSearch] = useState("");
+
   const [htsData, setHtsData] = useState([]);
+  const [search, setSearch] = useState("");
 
-  // ✅ Normalize country
+  const [htsMapping, setHtsMapping] = useState([]);
+  const [dutyRules, setDutyRules] = useState([]);
+
+  // ✅ Normalize Country
   const normalizeCountry = (input) => {
-    const value = (input || "").toLowerCase().trim();
+    const val = (input || "").toLowerCase().trim();
 
-    if (value === "china" || value === "cn") return "china";
-    if (value === "us" || value === "usa" || value === "united states") return "usa";
+    if (val === "china" || val === "cn") return "china";
+    if (val === "us" || val === "usa" || val === "united states")
+      return "usa";
 
-    return value;
+    return val;
   };
 
-  // ✅ CSV Upload + Safe Parsing
-  const handleFileUpload = (e) => {
+  // ✅ Normalize HTS
+  const normalizeHTS = (code) => {
+    return (code || "").replace(/\D/g, "");
+  };
+
+  // ✅ Upload HTS CSV
+  const handleHTSUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
 
     reader.onload = (event) => {
-      const text = event.target.result;
-
-      const rows = text.split("\n").slice(1);
+      const rows = event.target.result.split("\n").slice(1);
 
       const parsed = rows
         .map((row) => {
@@ -43,7 +51,7 @@ export default function App() {
 
           return {
             code: parts[0].trim(),
-            description: parts.slice(1).join(" ").trim() || "No description"
+            description: parts.slice(1).join(" ").trim()
           };
         })
         .filter(Boolean);
@@ -54,57 +62,110 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  // ✅ Filter HTS list
-  const filteredHTS = htsData.filter((item) =>
-    item.description?.toLowerCase().includes(search.toLowerCase()) ||
-    item.code?.includes(search)
-  );
+  // ✅ Upload Section 232 Mapping
+  const handle232Upload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-  // ✅ Smart suggestions (scores matches)
-  const scoreMatch = (item) => {
-    const words = description.toLowerCase().split(" ");
-    let score = 0;
+    const reader = new FileReader();
 
-    words.forEach((word) => {
-      if (item.description.toLowerCase().includes(word)) {
-        score++;
-      }
-    });
+    reader.onload = (event) => {
+      const data = new Uint8Array(event.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
 
-    return score;
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(sheet);
+
+      const parsed = json.map((row) => ({
+        hts: normalizeHTS(row["US HTS"]),
+        result: row["Chapter 99 Result"]
+      }));
+
+      setHtsMapping(parsed);
+    };
+
+    reader.readAsArrayBuffer(file);
   };
 
+  // ✅ Upload Duty Rules
+  const handleDutyUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+      const data = new Uint8Array(event.target.result);
+      const workbook = XLSX.read(data, { type: "array" });
+
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const json = XLSX.utils.sheet_to_json(sheet);
+
+      const parsed = json.map((row) => ({
+        code: row["Chapter 99 HTS"],
+        desc: row["Description"],
+        rate: row["Additional Duty"]
+      }));
+
+      setDutyRules(parsed);
+    };
+
+    reader.readAsArrayBuffer(file);
+  };
+
+  // ✅ HTS Search
+  const filteredHTS = htsData.filter(
+    (h) =>
+      h.description?.toLowerCase().includes(search.toLowerCase()) ||
+      h.code.includes(search)
+  );
+
+  // ✅ Smart suggestions
   const suggestedHTS = htsData
-    .map((item) => ({ ...item, score: scoreMatch(item) }))
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
+    .filter((h) =>
+      description &&
+      h.description?.toLowerCase().includes(description.toLowerCase())
+    )
     .slice(0, 5);
 
-  // ✅ Entry classification (flexible)
+  // ✅ Main Classification Logic
   const classifyEntry = () => {
     if (!description && !country && !hts) {
       alert("Enter at least one field");
       return;
     }
 
-    let flags = [];
-    let duties = [];
-
+    const cleanHTS = normalizeHTS(hts);
     const normCountry = normalizeCountry(country);
-    const desc = (description || "").toLowerCase();
 
-    // Section 232
-    if (desc.includes("steel")) duties.push("9903.80.01 (25%)");
-    if (desc.includes("aluminum")) duties.push("9903.85.01 (10%)");
+    let duties = [];
+    let flags = [];
 
-    // Section 301
-    if (normCountry === "china" && hts) {
-      if (hts.startsWith("8504")) {
+    // ✅ SECTION 232 (REAL MAPPING LOOKUP)
+    const match = htsMapping.find((row) =>
+      cleanHTS.startsWith(row.hts?.substring(0, 6))
+    );
+
+    if (match) {
+      duties.push(match.result);
+
+      const dutyInfo = dutyRules.find(
+        (d) => d.code === match.result
+      );
+
+      if (dutyInfo?.rate) {
+        duties.push(`Rate: ${dutyInfo.rate}`);
+      }
+    } else {
+      flags.push("No 232 mapping");
+    }
+
+    // ✅ SECTION 301 (China logic)
+    if (normCountry === "china" && cleanHTS) {
+      if (cleanHTS.startsWith("84") || cleanHTS.startsWith("85")) {
         duties.push("9903.88.03 (25%)");
-      } else if (hts.startsWith("8471")) {
+      } else if (cleanHTS.startsWith("90")) {
         duties.push("9903.88.01 (25%)");
-      } else {
-        flags.push("Missing 301 duty");
       }
     }
 
@@ -125,10 +186,9 @@ export default function App() {
     setHts("");
   };
 
-  // ✅ Excel export
+  // ✅ Export
   const exportToExcel = () => {
     const ws = XLSX.utils.json_to_sheet(entries);
-
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Entries");
 
@@ -151,17 +211,16 @@ export default function App() {
         onChange={(e) => setDescription(e.target.value)}
       /><br /><br />
 
-      {/* ✅ Suggested HTS */}
       {suggestedHTS.length > 0 && (
         <div style={{ background: "#e6ffe6", padding: 10 }}>
-          <strong>Suggested HTS:</strong>
-          {suggestedHTS.map((item, i) => (
+          <b>Suggested HTS:</b>
+          {suggestedHTS.map((h, i) => (
             <div
               key={i}
-              onClick={() => setHts(item.code)}
+              onClick={() => setHts(h.code)}
               style={{ cursor: "pointer" }}
             >
-              {item.code} - {item.description}
+              {h.code} - {h.description}
             </div>
           ))}
         </div>
@@ -173,7 +232,14 @@ export default function App() {
         onChange={(e) => setCountry(e.target.value)}
       /><br /><br />
 
-      <input type="file" accept=".csv" onChange={handleFileUpload} /><br /><br />
+      <p><b>Upload HTS CSV</b></p>
+      <input type="file" accept=".csv" onChange={handleHTSUpload} /><br /><br />
+
+      <p><b>Upload 232 Mapping File</b></p>
+      <input type="file" accept=".xlsx" onChange={handle232Upload} /><br /><br />
+
+      <p><b>Upload Duty Rules File</b></p>
+      <input type="file" accept=".xlsx" onChange={handleDutyUpload} /><br /><br />
 
       <input
         placeholder="Search HTS"
@@ -182,13 +248,9 @@ export default function App() {
       /><br /><br />
 
       <div style={{ maxHeight: 150, overflowY: "scroll", border: "1px solid #ccc" }}>
-        {filteredHTS.map((item, i) => (
-          <div
-            key={i}
-            onClick={() => setHts(item.code)}
-            style={{ padding: 5, cursor: "pointer" }}
-          >
-            {item.code} - {item.description}
+        {filteredHTS.map((h, i) => (
+          <div key={i} onClick={() => setHts(h.code)} style={{ cursor: "pointer" }}>
+            {h.code} - {h.description}
           </div>
         ))}
       </div>
@@ -207,19 +269,15 @@ export default function App() {
       <hr />
 
       {entries.map((e, i) => (
-        <div
-          key={i}
-          style={{
-            background: e.flags !== "None" ? "#ffcccc" : "#ccffcc",
-            padding: 10,
-            margin: 5
-          }}
-        >
+        <div key={i} style={{
+          background: e.flags !== "None" ? "#ffcccc" : "#ccffcc",
+          padding: 10,
+          margin: 5
+        }}>
           <strong>{e.user}</strong> | {e.hts}
           <div>{e.description}</div>
           <div>{e.country}</div>
           <div><b>Duties:</b> {e.duties}</div>
-
           {e.flags !== "None" && (
             <div style={{ color: "red" }}>⚠ {e.flags}</div>
           )}
