@@ -45,13 +45,69 @@ export default function App() {
   const errorRate = totalEntries > 0
     ? ((errorEntries / totalEntries) * 100).toFixed(1)
     : 0;
+  
+// ✅ Normalize country input
+const normalizeCountry = (input) => {
+  const value = input.toLowerCase().trim();
+
+  if (value === "china" || value === "cn") return "china";
+  if (value === "united states" || value === "us" || value === "usa") return "usa";
+
+  return value; // fallback
+};
 
   // ✅ Classification Engine
   const classifyEntry = () => {
-    if (!description || !country || !hts) {
-      alert("Description, Country, and HTS required");
-      return;
+
+  // ✅ allow flexible entry (no strict requirement)
+  if (!description && !country && !hts) {
+    alert("Enter at least one field");
+    return;
+  }
+
+  let flags = [];
+  let duties = [];
+
+  const normCountry = normalizeCountry(country);
+  const desc = description?.toLowerCase() || "";
+
+  // ✅ Section 232 (only if description exists)
+  if (desc.includes("steel")) {
+    duties.push("9903.80.01 (25%)");
+  }
+
+  if (desc.includes("aluminum")) {
+    duties.push("9903.85.01 (10%)");
+  }
+
+  // ✅ Section 301 (only if country + hts available)
+  if (normCountry === "china" && hts) {
+    if (hts.startsWith("8504")) {
+      duties.push("9903.88.03 (25%)");
+    } else if (hts.startsWith("8471")) {
+      duties.push("9903.88.01 (25%)");
+    } else {
+      flags.push("Missing 301 duty");
     }
+  }
+
+  const entry = {
+    user,
+    description: description || "N/A",
+    country: country || "N/A",
+    hts: hts || "N/A",
+    duties: duties.join(" | ") || "None",
+    flags: flags.join(" | ") || "None",
+    timestamp: new Date().toLocaleString()
+  };
+
+  setEntries(prev => [entry, ...prev]);
+
+  // ✅ reset fields
+  setDescription("");
+  setCountry("");
+  setHts("");
+};
 
     let duties = [];
     let flags = [];
