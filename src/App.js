@@ -29,21 +29,20 @@ export default function App() {
     reader.onload = (event) => {
       const rows = event.target.result.split("\n").slice(1);
 
-      const parsed = rows.map(row => {
-        const [code, description] = row.split(",");
-        return {
-          code: code?.trim(),
-          description: description?.trim()
-        };
-      }).filter(r => r.code);
+      cconst parsed = rows.map(row => {
+  const cleaned = row.replace(/"/g, "").split(",");
 
-      setHtsData(parsed);
-    };
+  const code = cleaned[0]?.trim();
+  const description = cleaned.slice(1).join(" ").trim();
 
-    reader.readAsText(file);
+  // ✅ Only keep valid HTS codes (10+ digits)
+  if (!code || code.length < 4) return null;
+
+  return {
+    code,
+    description: description || "No description"
   };
-
-  // ✅ Filter HTS
+}).filter(Boolean);
   const filteredHTS = htsData.filter(item =>
     item.description?.toLowerCase().includes(search.toLowerCase()) ||
     item.code?.includes(search)
