@@ -10,9 +10,9 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [htsData, setHtsData] = useState([]);
 
-  // ✅ Country normalization
+  // ✅ Normalize country
   const normalizeCountry = (input) => {
-    const value = input.toLowerCase().trim();
+    const value = (input || "").toLowerCase().trim();
 
     if (value === "china" || value === "cn") return "china";
     if (value === "us" || value === "usa" || value === "united states") return "usa";
@@ -20,41 +20,67 @@ export default function App() {
     return value;
   };
 
-  // ✅ Load CSV
+  // ✅ CSV Upload + Safe Parsing
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
+
     reader.onload = (event) => {
-      const rows = event.target.result.split("\n").slice(1);
+      const text = event.target.result;
 
-      cconst parsed = rows.map(row => {
-  const cleaned = row.replace(/"/g, "").split(",");
+      const rows = text.split("\n").slice(1);
 
-  const code = cleaned[0]?.trim();
-  const description = cleaned.slice(1).join(" ").trim();
+      const parsed = rows
+        .map((row) => {
+          if (!row) return null;
 
-  // ✅ Only keep valid HTS codes (10+ digits)
-  if (!code || code.length < 4) return null;
+          const cleaned = row.replace(/"/g, "");
+          const parts = cleaned.split(",");
 
-  return {
-    code,
-    description: description || "No description"
+          if (!parts[0]) return null;
+
+          return {
+            code: parts[0].trim(),
+            description: parts.slice(1).join(" ").trim() || "No description"
+          };
+        })
+        .filter(Boolean);
+
+      setHtsData(parsed);
+    };
+
+    reader.readAsText(file);
   };
-}).filter(Boolean);
-  const filteredHTS = htsData.filter(item =>
+
+  // ✅ Filter HTS list
+  const filteredHTS = htsData.filter((item) =>
     item.description?.toLowerCase().includes(search.toLowerCase()) ||
     item.code?.includes(search)
   );
 
-  // ✅ Suggestions
-  const suggestedHTS = htsData.filter(item =>
-    description.length > 2 &&
-    item.description?.toLowerCase().includes(description.toLowerCase())
-  ).slice(0, 5);
+  // ✅ Smart suggestions (scores matches)
+  const scoreMatch = (item) => {
+    const words = description.toLowerCase().split(" ");
+    let score = 0;
 
-  // ✅ Classification (flexible now)
+    words.forEach((word) => {
+      if (item.description.toLowerCase().includes(word)) {
+        score++;
+      }
+    });
+
+    return score;
+  };
+
+  const suggestedHTS = htsData
+    .map((item) => ({ ...item, score: scoreMatch(item) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  // ✅ Entry classification (flexible)
   const classifyEntry = () => {
     if (!description && !country && !hts) {
       alert("Enter at least one field");
@@ -65,7 +91,7 @@ export default function App() {
     let duties = [];
 
     const normCountry = normalizeCountry(country);
-    const desc = description?.toLowerCase() || "";
+    const desc = (description || "").toLowerCase();
 
     // Section 232
     if (desc.includes("steel")) duties.push("9903.80.01 (25%)");
@@ -83,7 +109,7 @@ export default function App() {
     }
 
     const entry = {
-      user,
+      user: user || "N/A",
       description: description || "N/A",
       country: country || "N/A",
       hts: hts || "N/A",
@@ -92,49 +118,76 @@ export default function App() {
       timestamp: new Date().toLocaleString()
     };
 
-    setEntries(prev => [entry, ...prev]);
+    setEntries((prev) => [entry, ...prev]);
 
     setDescription("");
     setCountry("");
     setHts("");
   };
 
-  // ✅ Export
+  // ✅ Excel export
   const exportToExcel = () => {
     const ws = XLSX.utils.json_to_sheet(entries);
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Entries");
-    XLSX.writeFile(wb, "entries.xlsx");
+
+    XLSX.writeFile(wb, "brokerage_entries.xlsx");
   };
 
   return (
     <div style={{ padding: 20 }}>
       <h1>Brokerage Command Center</h1>
 
-      <input placeholder="User" value={user} onChange={e => setUser(e.target.value)} /><br /><br />
+      <input
+        placeholder="User"
+        value={user}
+        onChange={(e) => setUser(e.target.value)}
+      /><br /><br />
 
-      <input placeholder="Description" value={description} onChange={e => setDescription(e.target.value)} /><br /><br />
+      <input
+        placeholder="Description"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      /><br /><br />
 
+      {/* ✅ Suggested HTS */}
       {suggestedHTS.length > 0 && (
         <div style={{ background: "#e6ffe6", padding: 10 }}>
           <strong>Suggested HTS:</strong>
           {suggestedHTS.map((item, i) => (
-            <div key={i} onClick={() => setHts(item.code)} style={{ cursor: "pointer" }}>
+            <div
+              key={i}
+              onClick={() => setHts(item.code)}
+              style={{ cursor: "pointer" }}
+            >
               {item.code} - {item.description}
             </div>
           ))}
         </div>
       )}
 
-      <input placeholder="Country" value={country} onChange={e => setCountry(e.target.value)} /><br /><br />
+      <input
+        placeholder="Country"
+        value={country}
+        onChange={(e) => setCountry(e.target.value)}
+      /><br /><br />
 
       <input type="file" accept=".csv" onChange={handleFileUpload} /><br /><br />
 
-      <input placeholder="Search HTS" value={search} onChange={e => setSearch(e.target.value)} /><br /><br />
+      <input
+        placeholder="Search HTS"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      /><br /><br />
 
       <div style={{ maxHeight: 150, overflowY: "scroll", border: "1px solid #ccc" }}>
         {filteredHTS.map((item, i) => (
-          <div key={i} onClick={() => setHts(item.code)} style={{ padding: 5, cursor: "pointer" }}>
+          <div
+            key={i}
+            onClick={() => setHts(item.code)}
+            style={{ padding: 5, cursor: "pointer" }}
+          >
             {item.code} - {item.description}
           </div>
         ))}
@@ -142,7 +195,11 @@ export default function App() {
 
       <br />
 
-      <input placeholder="Selected HTS" value={hts} onChange={e => setHts(e.target.value)} /><br /><br />
+      <input
+        placeholder="Selected HTS"
+        value={hts}
+        onChange={(e) => setHts(e.target.value)}
+      /><br /><br />
 
       <button onClick={classifyEntry}>Generate Entry</button>
       <button onClick={exportToExcel}>Export Excel</button>
@@ -150,16 +207,22 @@ export default function App() {
       <hr />
 
       {entries.map((e, i) => (
-        <div key={i} style={{
-          background: e.flags !== "None" ? "#ffcccc" : "#ccffcc",
-          padding: 10,
-          margin: 5
-        }}>
+        <div
+          key={i}
+          style={{
+            background: e.flags !== "None" ? "#ffcccc" : "#ccffcc",
+            padding: 10,
+            margin: 5
+          }}
+        >
           <strong>{e.user}</strong> | {e.hts}
           <div>{e.description}</div>
           <div>{e.country}</div>
-          <div>{e.duties}</div>
-          {e.flags !== "None" && <div>⚠ {e.flags}</div>}
+          <div><b>Duties:</b> {e.duties}</div>
+
+          {e.flags !== "None" && (
+            <div style={{ color: "red" }}>⚠ {e.flags}</div>
+          )}
         </div>
       ))}
     </div>
